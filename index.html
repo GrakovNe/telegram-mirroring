@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram mirror</title>
+<meta name="description" id="meta-desc" content="">
+<meta name="color-scheme" content="light">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f1f2f4;
+    --card: #ffffff;
+    --ink: #14161a;          /* headings */
+    --text: #3d4149;         /* body */
+    --muted: #9096a0;
+    --accent: #ff6f3f;
+    --accent-press: #ec5f30;
+    --accent-soft: rgba(255, 111, 63, .14);
+    --border: #e7e9ee;
+    --radius: 14px;
+    --maxw: 900px;       /* single-column width */
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+    accent-color: var(--accent);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection { background: var(--accent-soft); }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  img { max-width: 100%; }
+
+  /* fade media in once decoded */
+  .img-fade { opacity: 0; transition: opacity .45s ease; }
+  .img-fade.loaded { opacity: 1; }
+
+  /* ---- sticky blurred header ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    background: rgba(241, 242, 244, .72);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+            backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner {
+    width: 95%;
+    max-width: var(--maxw);
+    padding: 16px 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+  }
+  .wordmark {
+    font-family: var(--serif);
+    font-optical-sizing: auto;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    text-decoration: none;
+    transition: color .2s ease;
+  }
+  .wordmark:hover { color: var(--accent); }
+
+  .contacts { display: flex; align-items: center; gap: 18px; flex: none; }
+  .contacts a {
+    color: var(--muted);
+    display: inline-flex;
+    transition: color .2s ease, transform .2s ease;
+  }
+  .contacts a:hover { color: var(--accent); transform: translateY(-1px); }
+  .contacts svg { width: 19px; height: 19px; fill: currentColor; display: block; }
+
+  /* ---- feed ---- */
+  main {
+    width: 95%;
+    max-width: var(--maxw);
+    margin: 26px auto 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    flex: 1 0 auto;
+  }
+
+  .post {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(20, 22, 26, .04), 0 10px 28px rgba(20, 22, 26, .05);
+    padding: 30px 34px 28px;
+    transition: box-shadow .25s ease, transform .25s ease;
+    animation: rise .4s cubic-bezier(.22, .61, .36, 1) both;
+  }
+  .post:hover {
+    box-shadow: 0 2px 4px rgba(20, 22, 26, .05), 0 16px 40px rgba(20, 22, 26, .09);
+    transform: translateY(-2px);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .post-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+  .post-date {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color .2s ease;
+  }
+  .post-date svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+  .post-date:hover { color: var(--accent); }
+
+  .post-title {
+    font-family: var(--serif);
+    font-optical-sizing: auto;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    margin-bottom: 14px;
+    text-wrap: balance;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .post-text {
+    font-size: 16.5px;
+    line-height: 1.7;
+    color: var(--text);
+    text-wrap: pretty;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+  .post-text p { margin: 0 0 0.75em; }
+  .post-text p:last-child { margin-bottom: 0; }
+  /* long unbreakable tokens (URLs) wrap instead of forcing wide gaps */
+  .post-text a { word-break: break-word; }
+  .post-title a, .post-text a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 2px;
+    text-decoration-color: rgba(255, 111, 63, .35);
+    transition: color .2s ease, text-decoration-color .2s ease;
+  }
+  .post-title a:hover, .post-text a:hover { text-decoration-color: var(--accent); }
+  /* collapsed excerpt: ~5 lines, faded at the bottom. The JS overflow check
+     (OVERFLOW_SLACK_PX) decides whether the "Read more" button is needed. */
+  .post-text.collapsed {
+    max-height: 8.6em;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  }
+
+  /* ---- read more pill (under text) ---- */
+  .read-more {
+    align-self: flex-start;
+    margin-top: 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 11px;
+    padding: 11px 22px;
+    font: 600 12.5px/1 var(--sans);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background .2s ease, transform .2s ease, box-shadow .2s ease;
+    box-shadow: 0 4px 12px rgba(255, 111, 63, .28);
+  }
+  .read-more:hover { background: var(--accent-press); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(255, 111, 63, .34); }
+  .read-more:active { transform: translateY(0); }
+
+  /* placeholder shown when an image fails to load (keeps layout stable) */
+  .media-broken {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    background: #eef0f3;
+    color: #b6bbc4;
+    border-radius: 12px;
+  }
+  .media-broken svg { width: 44px; height: 44px; fill: currentColor; opacity: .75; }
+  .hero .media-broken { width: 420px; max-width: 100%; height: 220px; }
+  .preview .media-broken { height: 150px; margin-top: 10px; }
+  .lb-stage .media-broken { width: min(70vw, 520px); height: min(60vh, 420px); border-radius: 8px; }
+
+  /* ---- hero media (first item, centered) ---- */
+  .hero {
+    margin: 14px 0 20px;
+    display: flex;
+    justify-content: center;
+    cursor: zoom-in;
+  }
+  /* wrapper shrinks to the image so the count badge sticks to ITS corner */
+  .hero-frame { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+  .hero img.photo,
+  .hero .video { max-width: 100%; max-height: 380px; border-radius: 12px; }
+  .hero img.photo {
+    display: block;
+    object-fit: contain;
+    background: #eef0f3;
+    cursor: zoom-in;
+    transition: filter .2s ease, opacity .45s ease;
+  }
+  .hero img.photo:hover { filter: brightness(.95); }
+  .video { position: relative; overflow: hidden; cursor: pointer; }
+  .video img { max-height: 380px; max-width: 100%; display: block; }
+
+  /* media-count badge over the first item */
+  .count-badge {
+    position: absolute;
+    right: 12px; bottom: 12px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px;
+    background: rgba(12, 13, 15, .62);
+    color: #fff;
+    font-size: 12.5px; font-weight: 600;
+    border-radius: 20px;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  .count-badge svg { width: 14px; height: 14px; fill: currentColor; }
+
+  .play {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .20);
+    transition: background .2s ease;
+  }
+  .video:hover .play { background: rgba(0, 0, 0, .30); }
+  .play::after {
+    content: "";
+    width: 0; height: 0;
+    border-left: 22px solid #fff;
+    border-top: 14px solid transparent;
+    border-bottom: 14px solid transparent;
+    margin-left: 6px;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .5));
+  }
+
+  /* ---- lightbox carousel ---- */
+  #lightbox {
+    position: fixed; inset: 0;
+    background: rgba(8, 9, 11, .93);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 1000;
+    cursor: zoom-out;
+    padding: 24px;
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  }
+  #lightbox.open { display: flex; animation: fade .2s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .lb-stage {
+    position: relative;
+    max-width: 100%; max-height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    cursor: default;
+  }
+  .lb-stage img { max-width: 90vw; max-height: 88vh; border-radius: 8px; box-shadow: 0 12px 48px rgba(0, 0, 0, .6); display: block; }
+  .lb-stage .play::after { border-left-width: 26px; border-top-width: 17px; border-bottom-width: 17px; }
+  #lightbox .close {
+    position: absolute; top: 16px; right: 24px;
+    color: #fff; font-size: 34px; line-height: 1;
+    cursor: pointer; opacity: .85; user-select: none; z-index: 2;
+    transition: opacity .2s ease;
+  }
+  #lightbox .close:hover { opacity: 1; }
+  .lb-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 52px; height: 52px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, .12);
+    color: #fff; border: none; border-radius: 50%;
+    font-size: 28px; line-height: 1; cursor: pointer;
+    user-select: none; transition: background .2s ease;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  .lb-nav:hover { background: rgba(255, 255, 255, .24); }
+  .lb-nav.prev { left: 20px; }
+  .lb-nav.next { right: 20px; }
+  .lb-counter {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    color: #fff; font-size: 13.5px; font-weight: 500;
+    background: rgba(255, 255, 255, .12);
+    padding: 5px 14px; border-radius: 20px;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  #lightbox.single .lb-nav,
+  #lightbox.single .lb-counter { display: none; }
+
+  /* ---- link preview ---- */
+  .preview {
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color .2s ease, background .2s ease;
+  }
+  .preview:hover { border-color: var(--accent); background: #fffaf8; }
+  .preview .site { font-size: 12px; color: var(--muted); }
+  .preview .title { font-weight: 600; color: var(--ink); margin: 3px 0; }
+  .preview .desc { font-size: 14px; color: var(--text); }
+  .preview img { width: 100%; border-radius: 8px; margin-top: 10px; }
+
+  /* ---- status / footer ---- */
+  .status { text-align: center; color: var(--muted); font-size: 13.5px; padding: 20px 0 6px; min-height: 24px; }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    margin: 8px auto;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    width: 95%;
+    max-width: var(--maxw);
+    background: var(--card);
+    border: 1px solid var(--border);
+    text-align: center;
+    padding: 18px;
+    font-size: 13.5px;
+    color: #5a5f66;
+    box-shadow: 0 1px 2px rgba(20, 22, 26, .04);
+    border-radius: 14px;
+    margin: 16px auto 28px;
+  }
+  footer a { color: var(--ink); text-decoration: none; font-weight: 600; transition: color .2s ease; }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 560px) {
+    .post { padding: 24px 22px; }
+    .post-title { font-size: 20px; }
+    .hero img.photo, .hero .video, .hero .video img { max-height: 300px; }
+    .lb-nav { width: 44px; height: 44px; font-size: 24px; }
+    .lb-nav.prev { left: 8px; }
+    .lb-nav.next { right: 8px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="wordmark" href="#" id="wordmark"></a>
+    <nav class="contacts">
+      <a id="channel-link" target="_blank" rel="noopener" title="Telegram">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71l-4.15-3.06-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Media viewer">
+  <span class="close" role="button" tabindex="0" aria-label="Close">&times;</span>
+  <button class="lb-nav prev" aria-label="Previous">&#8249;</button>
+  <div class="lb-stage"></div>
+  <button class="lb-nav next" aria-label="Next">&#8250;</button>
+  <div class="lb-counter"></div>
+</div>
+
+<main id="feed" aria-live="polite"></main>
+
+<div class="status" id="status"><div class="spinner"></div></div>
+<div id="sentinel" style="height:1px"></div>
+
+<footer id="footer"></footer>
+
+<script>
+'use strict';
+
+const feed = document.getElementById('feed');
+const statusEl = document.getElementById('status');
+const sentinel = document.getElementById('sentinel');
+
+// Locale: Russian for ru-* browsers, English otherwise. Strings load in init().
+const LANG = (navigator.language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+let T = {};
+
+// Format an ISO datetime for display in the chosen locale, preserving the
+// post's own wall-clock time (the ISO carries a +00:00 offset).
+function fmtDate(iso) {
+  const m = (iso || '').match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return '';
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+  const day = new Intl.DateTimeFormat(LANG,
+    { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d);
+  return `${day}, ${m[4]}:${m[5]}`;
+}
+
+const CAL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>';
+const STACK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12v12H4z" opacity=".55"/><path d="M8 3h13v13h-2V5H8z"/></svg>';
+const BROKEN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 5v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2zm-2 9.2V5H5v9.2l3.3-3.3 3 3 3.4-3.4 3.3 3.7zM8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/></svg>';
+
+/** Neutral fixed-size box that replaces a broken image so layout stays put. */
+function brokenBox(cls) {
+  return el('div', cls ? 'media-broken ' + cls : 'media-broken', BROKEN_ICON);
+}
+
+document.querySelector('.wordmark').addEventListener('click', e => {
+  e.preventDefault();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+let nextBefore = null;
+let loading = false;
+let done = false;
+let firstLoad = true;
+
+/** Small DOM helper. */
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+}
+
+// Like el() but sets textContent — use for untrusted/plain strings (no HTML).
+function txt(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  e.textContent = text;
+  return e;
+}
+
+// px tolerance for "does the collapsed body actually overflow" (rounding slack).
+const OVERFLOW_SLACK_PX = 4;
+
+/** <img> that fades in once decoded. */
+function fadingImg(src, cls) {
+  if (!src) return brokenBox(cls);   // media that failed to mirror -> placeholder
+  const img = el('img', cls ? cls + ' img-fade' : 'img-fade');
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.alt = '';
+  img.addEventListener('load', () => img.classList.add('loaded'));
+  // A failed image would otherwise stay invisible (opacity 0) yet keep a
+  // broken box — swap it for a neutral placeholder of the same footprint.
+  img.addEventListener('error', () => img.replaceWith(brokenBox(cls)));
+  img.src = src;
+  return img;
+}
+
+function renderPost(p) {
+  const card = el('article', 'post');
+
+  const head = el('div', 'post-head');
+  const date = el('a', 'post-date', `${CAL_ICON}<span>${fmtDate(p.datetime)}</span>`);
+  date.href = p.url;
+  date.target = '_blank';
+  date.rel = 'noopener';
+  head.appendChild(date);
+  card.appendChild(head);
+
+  // Only the first media item shows in the feed. A photo opens the carousel;
+  // a video preview goes straight to the video in Telegram.
+  // The click lives on the hero container so it survives a broken-image swap.
+  if (p.media && p.media.length) {
+    const hero = el('div', 'hero');
+    const frame = el('div', 'hero-frame');
+    const first = p.media[0];
+
+    if (first.type === 'video') {
+      const box = el('div', 'video');
+      if (first.thumb) box.appendChild(fadingImg(first.thumb));
+      box.appendChild(el('div', 'play'));
+      frame.appendChild(box);
+      frame.addEventListener('click', () => window.open(first.url, '_blank', 'noopener'));
+    } else {
+      frame.appendChild(fadingImg(first.url, 'photo'));
+      frame.addEventListener('click', () => openCarousel(p.media, 0));
+    }
+
+    if (p.media.length > 1) {
+      frame.appendChild(el('div', 'count-badge', STACK_ICON + p.media.length));
+    }
+    hero.appendChild(frame);
+    card.appendChild(hero);
+  }
+
+  // Text is a series of <p>…</p>: first paragraph is the title, the rest is
+  // the collapsible body (so paragraph spacing is controlled by CSS margins).
+  let body = null;
+  if (p.text_html) {
+    const holder = el('div', null, p.text_html);
+    const paras = [...holder.querySelectorAll('p')];
+    if (paras.length) {
+      card.appendChild(el('div', 'post-title', paras[0].innerHTML));
+      if (paras.length > 1) {
+        body = el('div', 'post-text collapsed');
+        paras.slice(1).forEach(para => body.appendChild(para));
+        card.appendChild(body);
+      }
+    } else {
+      card.appendChild(el('div', 'post-title', p.text_html));
+    }
+  }
+
+  if (p.preview) {
+    const a = el('a', 'preview');
+    // only follow http(s) preview targets; otherwise fall back to the post
+    a.href = /^https?:/i.test(p.preview.url || '') ? p.preview.url : p.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    // preview fields come from scraped external pages — insert as TEXT, never HTML
+    if (p.preview.site) a.appendChild(txt('div', 'site', p.preview.site));
+    if (p.preview.title) a.appendChild(txt('div', 'title', p.preview.title));
+    if (p.preview.desc) a.appendChild(txt('div', 'desc', p.preview.desc));
+    if (p.preview.image) a.appendChild(fadingImg(p.preview.image));
+    card.appendChild(a);
+  }
+
+  // "Read more" pill at the very bottom, shown only when the body overflows.
+  if (body) {
+    const btn = el('button', 'read-more', T.readMore);
+    btn.addEventListener('click', () => {
+      const collapsed = body.classList.toggle('collapsed');
+      btn.textContent = collapsed ? T.readMore : T.collapse;
+    });
+    requestAnimationFrame(() => {
+      if (body.scrollHeight - body.clientHeight > OVERFLOW_SLACK_PX) card.appendChild(btn);
+      else body.classList.remove('collapsed');
+    });
+  }
+
+  feed.appendChild(card);
+}
+
+/* ---- lightbox carousel ---- */
+const lb = document.getElementById('lightbox');
+const lbStage = lb.querySelector('.lb-stage');
+const lbCounter = lb.querySelector('.lb-counter');
+let lbMedia = [];
+let lbIndex = 0;
+
+function lbRender() {
+  const m = lbMedia[lbIndex];
+  lbStage.innerHTML = '';
+  if (!m) return;
+  if (m.type === 'video') {
+    const a = el('a');
+    a.href = m.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.cssText = 'position:relative;display:block';
+    if (m.thumb) { const img = el('img'); img.src = m.thumb; a.appendChild(img); }
+    a.appendChild(el('div', 'play'));
+    lbStage.appendChild(a);
+  } else if (!m.url) {
+    lbStage.appendChild(brokenBox());
+  } else {
+    const img = el('img');
+    img.addEventListener('error', () => img.replaceWith(brokenBox()));
+    img.src = m.url;
+    lbStage.appendChild(img);
+  }
+  lbCounter.textContent = (lbIndex + 1) + ' / ' + lbMedia.length;
+}
+
+function openCarousel(media, start) {
+  lbMedia = media || [];
+  lbIndex = start || 0;
+  lb.classList.toggle('single', lbMedia.length <= 1);
+  lbRender();
+  lb.classList.add('open');
+}
+
+function closeCarousel() {
+  lb.classList.remove('open');
+  lbStage.innerHTML = '';
+  lbMedia = [];
+}
+
+function lbStep(delta) {
+  if (lbMedia.length <= 1) return;
+  lbIndex = (lbIndex + delta + lbMedia.length) % lbMedia.length;
+  lbRender();
+}
+
+lb.addEventListener('click', closeCarousel);                  // backdrop closes
+lbStage.addEventListener('click', e => e.stopPropagation());  // but not the media itself
+lb.querySelector('.close').addEventListener('click', closeCarousel);
+lb.querySelector('.lb-nav.prev').addEventListener('click', e => { e.stopPropagation(); lbStep(-1); });
+lb.querySelector('.lb-nav.next').addEventListener('click', e => { e.stopPropagation(); lbStep(1); });
+document.addEventListener('keydown', e => {
+  if (!lb.classList.contains('open')) return;
+  if (e.key === 'Escape') closeCarousel();
+  else if (e.key === 'ArrowLeft') lbStep(-1);
+  else if (e.key === 'ArrowRight') lbStep(1);
+});
+
+/* ---- infinite scroll ---- */
+async function loadMore() {
+  if (loading || done) return;
+  loading = true;
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '<div class="spinner"></div>' + (firstLoad ? T.loading : T.loadingMore);
+  try {
+    const res = await fetch('/api/posts' + (nextBefore ? '?before=' + nextBefore : ''));
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    (data.posts || []).forEach(renderPost);
+
+    if (!data.posts || !data.posts.length ||
+        data.next_before === null || data.next_before === nextBefore) {
+      done = true;
+      statusEl.textContent = T.allPosts;
+    } else {
+      nextBefore = data.next_before;
+      statusEl.style.display = 'none';
+    }
+    firstLoad = false;
+  } catch (e) {
+    statusEl.textContent = (T.loadFailed || 'Failed to load: {msg}').replace('{msg}', e.message);
+  } finally {
+    loading = false;
+  }
+}
+
+// ---- branding + i18n from the channel's own data ----
+function applyLabels() {
+  lb.setAttribute('aria-label', T.mediaViewer);
+  lb.querySelector('.close').setAttribute('aria-label', T.close);
+  lb.querySelector('.lb-nav.prev').setAttribute('aria-label', T.prev);
+  lb.querySelector('.lb-nav.next').setAttribute('aria-label', T.next);
+  document.getElementById('wordmark').setAttribute('aria-label', T.toTop);
+}
+
+function applyMeta(meta) {
+  const title = (meta && (meta.title || meta.username)) || 'Telegram';
+  document.title = title;
+  document.getElementById('wordmark').textContent = title;
+  const link = document.getElementById('channel-link');
+  if (meta && meta.url) link.href = meta.url;
+  link.setAttribute('aria-label', title);
+  if (meta && meta.description) {
+    document.getElementById('meta-desc').setAttribute('content', meta.description);
+  }
+  const foot = document.getElementById('footer');
+  foot.textContent = '';
+  foot.appendChild(document.createTextNode('© ' + new Date().getUTCFullYear() + ' · '));
+  const a = document.createElement('a');
+  a.href = (meta && meta.url) || '#'; a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = title;
+  foot.appendChild(a);
+  foot.appendChild(document.createTextNode(' · ' + (T.license || 'MIT License')));
+}
+
+async function init() {
+  document.documentElement.lang = LANG;
+  const [locales, meta] = await Promise.all([
+    fetch('/locales.json').then(r => r.json()).catch(() => ({})),
+    fetch('/api/meta').then(r => r.json()).catch(() => null),
+  ]);
+  T = locales[LANG] || locales.en || {};
+  applyLabels();
+  applyMeta(meta);
+  statusEl.innerHTML = '<div class="spinner"></div>' + (T.loading || '');
+
+  new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) loadMore();
+  }, { rootMargin: '600px' }).observe(sentinel);
+
+  loadMore();
+}
+
+init();
+</script>
+</body>
+</html>

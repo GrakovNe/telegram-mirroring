@@ -1,0 +1,32 @@
+{
+  "en": {
+    "loading": "Loading posts…",
+    "loadingMore": "Loading more…",
+    "readMore": "Read more",
+    "collapse": "Collapse",
+    "allPosts": "⋯ that's all posts ⋯",
+    "loadFailed": "Failed to load: {msg} — scroll again to retry.",
+    "toTop": "To top",
+    "close": "Close",
+    "prev": "Previous",
+    "next": "Next",
+    "mediaViewer": "Media viewer",
+    "openInTelegram": "Open in Telegram",
+    "license": "MIT License"
+  },
+  "ru": {
+    "loading": "Загружаю посты…",
+    "loadingMore": "Загружаю ещё…",
+    "readMore": "Читать дальше",
+    "collapse": "Свернуть",
+    "allPosts": "⋯ это все посты ⋯",
+    "loadFailed": "Не удалось загрузить: {msg} — прокрути ещё раз для повтора.",
+    "toTop": "Наверх",
+    "close": "Закрыть",
+    "prev": "Назад",
+    "next": "Вперёд",
+    "mediaViewer": "Просмотр медиа",
+    "openInTelegram": "Открыть в Telegram",
+    "license": "MIT License"
+  }
+}
