@@ -16,6 +16,7 @@ import random
 import threading
 import urllib.error
 
+import recheck
 import scrape
 import store
 from config import POLL_INTERVAL, PAGE_DELAY, BACKFILL_PAGES_PER_CYCLE, MAX_POSTS
@@ -23,31 +24,49 @@ from config import POLL_INTERVAL, PAGE_DELAY, BACKFILL_PAGES_PER_CYCLE, MAX_POST
 # Delays (POLL_INTERVAL, PAGE_DELAY, ...) come from config/env; defaults are
 # deliberately gentle: one light request to Telegram at a time, well spaced.
 BACKOFF_429 = 300           # 5 min cool-down if Telegram ever rate-limits us
+# Consecutive empty history pages required to conclude the channel's history is
+# exhausted. One is not enough: t.me answers HTTP 200 with no posts both below
+# the first post and during a transient glitch.
+BACKFILL_EMPTY_PAGES = 3
 
 
 def _sleep(rng):
     time.sleep(random.uniform(*rng))
 
 
-def _fetch_html(before=None):
-    """Fetch one t.me/s page, handling rate limits. Returns HTML or None."""
-    for attempt in range(4):
+def _retry(exc, attempt):
+    """Sleep after a failed fetch: long cool-down on 429, linear backoff else."""
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+        time.sleep(BACKOFF_429)
+    else:
+        time.sleep(5 * (attempt + 1))
+
+
+def fetch_retrying(fetch, *args, attempts=4):
+    """Call fetch(*args) with retries. Returns the page HTML, or None on failure.
+
+    Shared by the sync loop and the edit re-checker so both are equally polite."""
+    for attempt in range(attempts):
         try:
-            return scrape.fetch_html(before)
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                time.sleep(BACKOFF_429)
-            else:
-                time.sleep(5 * (attempt + 1))
-        except Exception:
-            time.sleep(5 * (attempt + 1))
+            return fetch(*args)
+        except Exception as e:
+            _retry(e, attempt)
     return None
+
+
+def _fetch_html(before=None):
+    return fetch_retrying(scrape.fetch_html, before)
 
 
 def _fetch(before=None):
     """Fetch+parse one page. Returns posts or None."""
     html = _fetch_html(before)
     return scrape.parse_posts(html) if html is not None else None
+
+
+def _fetch_post(pid):
+    """Single-post page for the re-checker, with the same retries as the loop."""
+    return fetch_retrying(scrape.fetch_post_html, pid)
 
 
 _MAX_POST_ID = 10 ** 12   # larger than any real Telegram post id; used as "+inf"
@@ -116,10 +135,19 @@ def backfill(st, state, pages=BACKFILL_PAGES_PER_CYCLE):
             break
         fresh = [p for p in posts if not st.has(p["id"])]
         page_min = scrape.page_min_id(posts)
-        # No new posts and the page reaches no further back than our cursor =>
-        # we've hit the bottom of the channel's history.
-        reached_bottom = before is not None and not fresh and (page_min or 0) >= before
-        if not posts or reached_bottom:
+        # Only a page that actually contains posts can prove we reached the
+        # bottom: it must reach strictly further back than our cursor. A single
+        # empty page proves nothing (interstitial / markup change / transient
+        # 200), so it only counts after a streak of them.
+        if not posts:
+            streak = state.get("backfill_empty_streak", 0) + 1
+            state["backfill_empty_streak"] = streak
+            if streak >= BACKFILL_EMPTY_PAGES:
+                state["backfill_done"] = True
+            store.save_state(state)
+            break
+        state["backfill_empty_streak"] = 0
+        if before is not None and not fresh and (page_min or 0) >= before:
             state["backfill_done"] = True
             store.save_state(state)
             break
@@ -131,7 +159,8 @@ def backfill(st, state, pages=BACKFILL_PAGES_PER_CYCLE):
 
 
 def run_loop(st):
-    """Forever: keep newest fresh, keep backfilling until history is complete."""
+    """Forever: keep newest fresh, keep backfilling until history is complete,
+    and re-check recent posts for edits."""
     state = store.load_state()
     while True:
         try:
@@ -139,6 +168,11 @@ def run_loop(st):
             if not state.get("backfill_done"):
                 _sleep(PAGE_DELAY)
                 backfill(st, state)
+            _sleep(PAGE_DELAY)
+            result = recheck.run_cycle(st, fetch_page=_fetch_post)
+            if result["edited"]:
+                print(f"recheck: {result['checked']} checked, "
+                      f"edited -> {result['edited']}")
         except Exception as e:
             print("sync error:", e)
         time.sleep(POLL_INTERVAL)

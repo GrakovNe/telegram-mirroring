@@ -9,6 +9,8 @@ just the same page a logged-out browser would see.
 import re
 import html as htmllib
 import urllib.request
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 from config import CHANNEL
 
@@ -18,8 +20,14 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 ALLOWED_TAGS = {
     "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-    "a", "br", "code", "pre", "blockquote", "span", "tg-spoiler", "tg-emoji",
+    "a", "br", "code", "pre", "blockquote", "span", "tg-spoiler",
 }
+# Subtree discarded entirely, not just the tag.
+DROP_CONTENT_TAGS = {"script", "style", "iframe", "object", "embed"}
+# Kept transparently: the glyph inside is what we want, the wrapper is not.
+EMOJI_WRAPPER_TAGS = {"tg-emoji"}
+# Href schemes we keep; anything else (javascript:, data:, vbscript:) is dropped.
+ALLOWED_SCHEMES = {"http", "https", "mailto", "tg"}
 
 
 def fetch_html(before=None, timeout=20):
@@ -29,29 +37,123 @@ def fetch_html(before=None, timeout=20):
         return r.read().decode("utf-8", "replace")
 
 
+def fetch_post_html(pid, timeout=20):
+    """Fetch the single-post preview page t.me/s/<channel>/<id>.
+
+    Telegram answers with a window of ~15 posts around <id>, so one request can
+    re-check many posts at once (see recheck.py)."""
+    req = urllib.request.Request(f"{BASE}/{pid}", headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def _safe_href(raw):
+    """Return an href worth emitting, or None to unwrap the anchor."""
+    if raw is None:
+        return None
+    # Browsers strip ASCII whitespace and NUL from a URL before resolving its
+    # scheme, so "java\nscript:" must not pass as a scheme-less relative link.
+    url = re.sub(r"[\x00-\x20\x7f]+", "", raw)
+    if not url:
+        return None
+    scheme = urlsplit(url).scheme.lower()
+    if url.startswith("//"):
+        return url
+    if not scheme:
+        return url                      # relative link
+    return url if scheme in ALLOWED_SCHEMES else None
+
+
+class _Frame:
+    __slots__ = ("tag", "emit", "dropped")
+
+    def __init__(self, tag, emit, dropped=False):
+        self.tag = tag        # tag as it appeared in the source
+        self.emit = emit      # tag to emit (None = unwrap / drop)
+        self.dropped = dropped
+
+
+class _Sanitizer(HTMLParser):
+    """Allowlist sanitizer that rebuilds the fragment from parsed events.
+
+    Rebuilding from events (rather than regex-rewriting the source) is what makes
+    this robust: an attribute can only reach the output if we name it explicitly,
+    so unquoted handlers, entity-obfuscated schemes and stray markup cannot
+    smuggle themselves through. Allowed tags are emitted bare, except <a href>.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+        self.stack = []
+
+    def _dropping(self):
+        return any(f.dropped for f in self.stack)
+
+    def _open(self, tag, attrs, self_closing):
+        if tag in DROP_CONTENT_TAGS:
+            if not self_closing:
+                self.stack.append(_Frame(tag, None, dropped=True))
+            return
+        if tag in EMOJI_WRAPPER_TAGS:
+            if not self_closing:
+                self.stack.append(_Frame(tag, None))
+            return
+        if tag not in ALLOWED_TAGS:
+            if not self_closing:
+                self.stack.append(_Frame(tag, None))   # unwrap, keep children
+            return
+        if tag == "br":
+            self.out.append("<br>")
+            return
+        if tag == "a":
+            href = _safe_href(dict(attrs).get("href"))
+            if href is None:
+                self.stack.append(_Frame(tag, None))   # unsafe href -> plain text
+                return
+            self.out.append(f'<a href="{htmllib.escape(href, quote=True)}">')
+        else:
+            self.out.append(f"<{tag}>")
+        if not self_closing:
+            self.stack.append(_Frame(tag, tag))
+
+    def handle_starttag(self, tag, attrs):
+        self._open(tag, attrs, self_closing=False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._open(tag, attrs, self_closing=True)
+
+    def handle_endtag(self, tag):
+        # Close the innermost matching opener; anything left open inside it is
+        # closed here too, so the output is always balanced.
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i].tag == tag:
+                for frame in reversed(self.stack[i:]):
+                    if frame.emit:
+                        self.out.append(f"</{frame.emit}>")
+                del self.stack[i:]
+                return
+
+    def handle_data(self, data):
+        if not self._dropping():
+            self.out.append(htmllib.escape(data, quote=False))
+
+    def result(self):
+        self.close()
+        for frame in reversed(self.stack):
+            if frame.emit:
+                self.out.append(f"</{frame.emit}>")
+        self.stack = []
+        return "".join(self.out)
+
+
 def sanitize(text_html):
     """Allowlist sanitizer for a post's text HTML (keeps inline formatting)."""
     if not text_html:
         return ""
-    text_html = re.sub(r"<(script|style)\b.*?</\1>", "", text_html, flags=re.S | re.I)
-    text_html = re.sub(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*')", "", text_html, flags=re.I)
-    text_html = re.sub(r"javascript:", "#", text_html, flags=re.I)
-
-    def repl(m):
-        whole = m.group(0)
-        closing = whole.startswith("</")
-        tag = m.group(1).lower()
-        if tag not in ALLOWED_TAGS:
-            return ""
-        if tag == "a" and not closing:
-            href = re.search(r'href\s*=\s*"([^"]*)"', whole, flags=re.I)
-            url = href.group(1) if href else "#"
-            return f'<a href="{htmllib.escape(url, quote=True)}">'
-        if tag == "a" and closing:
-            return "</a>"
-        return whole
-
-    return re.sub(r"</?([a-zA-Z0-9-]+)[^>]*>", repl, text_html)
+    p = _Sanitizer()
+    p.feed(text_html)
+    return p.result()
 
 
 # Captures the URL inside `background-image:url(...)`. The URL may contain an
@@ -110,12 +212,15 @@ def _parse_preview(chunk):
     return preview
 
 
+_POST_ID_RE = re.compile(rf'data-post="{re.escape(CHANNEL)}/(\d+)"')
+
+
 def parse_posts(page_html):
     """Parse a t.me/s page into posts (DOM order = oldest -> newest)."""
     chunks = page_html.split('js-widget_message_wrap')[1:]
     posts = []
     for chunk in chunks:
-        mid = re.search(rf'data-post="{CHANNEL}/(\d+)"', chunk)
+        mid = _POST_ID_RE.search(chunk)
         if not mid:
             continue
         pid = int(mid.group(1))

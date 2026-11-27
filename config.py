@@ -37,3 +37,18 @@ BACKFILL_PAGES_PER_CYCLE = _i("BACKFILL_PAGES_PER_CYCLE", 1)        # history pa
 
 # How many posts to mirror in total. 0 = all history (default).
 MAX_POSTS = _i("MAX_POSTS", 0)
+
+# --- edit re-check (see recheck.py) ------------------------------------------
+# Telegram posts stay editable after publishing and the web preview silently
+# reflects edits, so recent posts are re-fetched on a geometric backoff:
+# every RECHECK_FIRST_INTERVAL seconds at first, interval *= RECHECK_FACTOR
+# after each unchanged check, until the post ages out of the edit window.
+RECHECK_ENABLED = _i("RECHECK_ENABLED", 1)
+RECHECK_WINDOW = _i("RECHECK_WINDOW", 86400)              # how long posts stay editable
+RECHECK_FIRST_INTERVAL = _f("RECHECK_FIRST_INTERVAL", 900)  # first gap after publishing
+RECHECK_FACTOR = _f("RECHECK_FACTOR", 2.0)                # geometric growth of the gap
+RECHECK_MAX_PAGES = _i("RECHECK_MAX_PAGES", 4)            # t.me requests per re-check cycle
+
+# Absolute public base URL (e.g. https://mirror.example.com) for canonical links,
+# OG tags and sitemap.xml. Empty -> derive from the request's Host header.
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
