@@ -336,6 +336,20 @@
   .preview .desc { font-size: 14px; color: var(--text); }
   .preview img { width: 100%; border-radius: 8px; margin-top: 10px; }
 
+  /* ---- server-rendered extras ---- */
+  .post-nav {
+    display: flex; justify-content: space-between; gap: 12px;
+    width: 95%; max-width: var(--maxw); margin: 18px auto -8px;
+    font-size: 13.5px;
+  }
+  .post-nav a { color: var(--muted); text-decoration: none; transition: color .2s ease; }
+  .post-nav a:hover { color: var(--accent); }
+  h1.post-title { font-size: 26px; margin-bottom: 16px; }
+  .post-edited {
+    font-size: 12px; color: var(--muted); font-style: italic;
+    margin-right: auto; align-self: center;
+  }
+
   /* ---- status / footer ---- */
   .status { text-align: center; color: var(--muted); font-size: 13.5px; padding: 20px 0 6px; min-height: 24px; }
   .spinner {
@@ -377,12 +391,13 @@
     * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
   }
 </style>
+<!--SSR:HEAD-->
 </head>
 <body>
 
 <header class="topbar">
   <div class="topbar-inner">
-    <a class="wordmark" href="#" id="wordmark"></a>
+    <a class="wordmark" href="#" id="wordmark"><!--SSR:WORDMARK--></a>
     <nav class="contacts">
       <a id="channel-link" target="_blank" rel="noopener" title="Telegram">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71l-4.15-3.06-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
@@ -399,13 +414,14 @@
   <div class="lb-counter"></div>
 </div>
 
-<main id="feed" aria-live="polite"></main>
+<main id="feed" aria-live="polite"><!--SSR:BODY--></main>
 
 <div class="status" id="status"><div class="spinner"></div></div>
 <div id="sentinel" style="height:1px"></div>
 
-<footer id="footer"></footer>
+<footer id="footer"><!--SSR:FOOTER--></footer>
 
+<!--SSR:STATE-->
 <script>
 'use strict';
 
@@ -443,6 +459,7 @@ document.querySelector('.wordmark').addEventListener('click', e => {
 });
 
 let nextBefore = null;
+let loadedOnce = false;
 let loading = false;
 let done = false;
 let firstLoad = true;
@@ -481,10 +498,14 @@ function fadingImg(src, cls) {
   return img;
 }
 
-function renderPost(p) {
+function buildPost(p) {
   const card = el('article', 'post');
+  card.id = 'post-' + p.id;
+  card.dataset.id = p.id;
+  card.dataset.media = JSON.stringify(p.media || []);
 
   const head = el('div', 'post-head');
+  if (p.edited_at) head.appendChild(el('span', 'post-edited', T.edited || 'edited'));
   const date = el('a', 'post-date', `${CAL_ICON}<span>${fmtDate(p.datetime)}</span>`);
   date.href = p.url;
   date.target = '_blank';
@@ -518,17 +539,20 @@ function renderPost(p) {
     card.appendChild(hero);
   }
 
-  // Text is a series of <p>…</p>: first paragraph is the title, the rest is
-  // the collapsible body (so paragraph spacing is controlled by CSS margins).
+  // Text is a series of top-level blocks (<p>, <pre>, <blockquote>): the first
+  // is the title, the rest is the collapsible body. Mirrors _top_level_blocks()
+  // in render.py so server-rendered and client-rendered cards match.
   let body = null;
   if (p.text_html) {
     const holder = el('div', null, p.text_html);
-    const paras = [...holder.querySelectorAll('p')];
-    if (paras.length) {
-      card.appendChild(el('div', 'post-title', paras[0].innerHTML));
-      if (paras.length > 1) {
+    const blocks = [...holder.children];
+    if (blocks.length) {
+      const first = blocks[0];
+      const titleHtml = first.tagName === 'P' ? first.innerHTML : first.outerHTML;
+      card.appendChild(el('div', 'post-title', titleHtml));
+      if (blocks.length > 1) {
         body = el('div', 'post-text collapsed');
-        paras.slice(1).forEach(para => body.appendChild(para));
+        blocks.slice(1).forEach(b => body.appendChild(b));
         card.appendChild(body);
       }
     } else {
@@ -550,20 +574,50 @@ function renderPost(p) {
     card.appendChild(a);
   }
 
-  // "Read more" pill at the very bottom, shown only when the body overflows.
-  if (body) {
-    const btn = el('button', 'read-more', T.readMore);
-    btn.addEventListener('click', () => {
-      const collapsed = body.classList.toggle('collapsed');
-      btn.textContent = collapsed ? T.readMore : T.collapse;
-    });
-    requestAnimationFrame(() => {
-      if (body.scrollHeight - body.clientHeight > OVERFLOW_SLACK_PX) card.appendChild(btn);
-      else body.classList.remove('collapsed');
-    });
-  }
+  return { card, body };
+}
 
+// "Read more" pill at the very bottom, shown only when the body overflows.
+function enhanceCard(card, body) {
+  if (!body) body = card.querySelector('.post-text');
+  if (!body || card.dataset.enhanced) return;
+  card.dataset.enhanced = '1';
+  const btn = el('button', 'read-more', T.readMore);
+  btn.addEventListener('click', () => {
+    const collapsed = body.classList.toggle('collapsed');
+    btn.textContent = collapsed ? T.readMore : T.collapse;
+  });
+  requestAnimationFrame(() => {
+    if (body.scrollHeight - body.clientHeight > OVERFLOW_SLACK_PX) card.appendChild(btn);
+    else body.classList.remove('collapsed');
+  });
+}
+
+function renderPost(p) {
+  const { card, body } = buildPost(p);
   feed.appendChild(card);
+  enhanceCard(card, body);
+}
+
+// Server-rendered cards are already in the DOM: wire up their interactions
+// instead of re-fetching and re-rendering them.
+function hydrate() {
+  const cards = [...feed.querySelectorAll('article.post')];
+  cards.forEach(card => {
+    let media = [];
+    try { media = JSON.parse(card.dataset.media || '[]'); } catch (e) {}
+    const frame = card.querySelector('.hero-frame');
+    if (frame) {
+      if (frame.dataset.video) {
+        frame.addEventListener('click',
+          () => window.open(frame.dataset.video, '_blank', 'noopener'));
+      } else {
+        frame.addEventListener('click', () => openCarousel(media, 0));
+      }
+    }
+    enhanceCard(card);
+  });
+  return cards.length;
 }
 
 /* ---- lightbox carousel ---- */
@@ -640,7 +694,10 @@ async function loadMore() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    (data.posts || []).forEach(renderPost);
+    (data.posts || []).forEach(p => {
+      if (document.getElementById('post-' + p.id)) return;   // server-rendered
+      renderPost(p);
+    });
 
     if (!data.posts || !data.posts.length ||
         data.next_before === null || data.next_before === nextBefore) {
@@ -669,7 +726,9 @@ function applyLabels() {
 
 function applyMeta(meta) {
   const title = (meta && (meta.title || meta.username)) || 'Telegram';
-  document.title = title;
+  // Only the feed page carries the raw username as its placeholder title;
+  // a server-rendered post page has a real title and must keep it.
+  if (document.title === CHANNEL) document.title = title;
   document.getElementById('wordmark').textContent = title;
   const link = document.getElementById('channel-link');
   if (meta && meta.url) link.href = meta.url;
@@ -702,6 +761,19 @@ async function init() {
     if (entries.some(e => e.isIntersecting)) loadMore();
   }, { rootMargin: '600px' }).observe(sentinel);
 
+  if (window.__SSR__ && hydrate()) {
+    // First page came from the server; continue from where it stopped.
+    nextBefore = window.__SSR__.nextBefore || null;
+    firstLoad = false;
+    if (!nextBefore) {
+      done = true;
+      statusEl.style.display = 'block';
+      statusEl.textContent = T.allPosts;
+    } else {
+      statusEl.style.display = 'none';
+    }
+    return;
+  }
   loadMore();
 }
 

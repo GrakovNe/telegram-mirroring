@@ -2,6 +2,7 @@
   "en": {
     "loading": "Loading posts…",
     "loadingMore": "Loading more…",
+    "edited": "edited",
     "readMore": "Read more",
     "collapse": "Collapse",
     "allPosts": "⋯ that's all posts ⋯",
@@ -17,6 +18,7 @@
   "ru": {
     "loading": "Загружаю посты…",
     "loadingMore": "Загружаю ещё…",
+    "edited": "отредактировано",
     "readMore": "Читать дальше",
     "collapse": "Свернуть",
     "allPosts": "⋯ это все посты ⋯",

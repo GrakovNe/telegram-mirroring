@@ -59,6 +59,27 @@ else
   die "posts must be a number or 'all'."
 fi
 
+echo
+echo "The mirror re-checks recently published posts for edits (Telegram lets"
+echo "authors edit a post for about a day). Checks start 15 min after publishing"
+echo "and double each time, so the request volume stays small."
+read -rp "Enable edit re-checking? [Y/n]: " RECHECK
+case "${RECHECK:-Y}" in
+  [Yy]|"") RECHECK_ENABLED=1 ;;
+  [Nn])    RECHECK_ENABLED=0 ;;
+  *)       die "answer y or n." ;;
+esac
+
+echo
+echo "Absolute public URL of this mirror (https://mirror.example.com)."
+echo "Required for search engines: canonical links, Open Graph, sitemap.xml, RSS."
+echo "Leave empty to serve pages without absolute links (no sitemap/RSS)."
+read -rp "Public URL [none]: " PUBLIC_URL
+PUBLIC_URL="${PUBLIC_URL%/}"
+if [ -n "$PUBLIC_URL" ] && [[ "$PUBLIC_URL" != http* ]]; then
+  die "public URL must start with http:// or https://."
+fi
+
 SERVICE="tgmirror-${CHANNEL}"
 INSTALL_DIR="/opt/${SERVICE}"
 UNIT="/etc/systemd/system/${SERVICE}.service"
@@ -69,6 +90,8 @@ echo "  channel      @${CHANNEL}"
 echo "  port         ${PORT}"
 echo "  politeness   poll=${POLL}s page=${PGMIN}-${PGMAX}s media=${MDMIN}-${MDMAX}s pages/cycle=${BFPC}"
 echo "  posts        $([ "$MAX_POSTS" -eq 0 ] && echo all || echo "$MAX_POSTS")"
+echo "  re-check     $([ "$RECHECK_ENABLED" -eq 1 ] && echo on || echo off)"
+echo "  public URL   ${PUBLIC_URL:-none}"
 echo "  directory    ${INSTALL_DIR}"
 echo "  service      ${SERVICE} (runs as ${RUN_USER})"
 read -rp "Proceed? [Y/n]: " OK
@@ -117,6 +140,8 @@ Environment=MEDIA_DELAY_MIN=${MDMIN}
 Environment=MEDIA_DELAY_MAX=${MDMAX}
 Environment=BACKFILL_PAGES_PER_CYCLE=${BFPC}
 Environment=MAX_POSTS=${MAX_POSTS}
+Environment=RECHECK_ENABLED=${RECHECK_ENABLED}
+Environment=PUBLIC_URL=${PUBLIC_URL}
 ExecStart=/usr/bin/env python3 ${INSTALL_DIR}/server.py
 Restart=always
 RestartSec=5
