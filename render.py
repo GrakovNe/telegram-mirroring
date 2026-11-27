@@ -200,17 +200,21 @@ def _ld_json(post, meta, base):
     images = [u for u in (thumbs + photos) if u]
     if images:
         data["image"] = images[0] if len(images) == 1 else images[:3]
-    return json.dumps(data, ensure_ascii=False)
+    # json.dumps does not escape '/', so a post containing "</script>" would end
+    # the script element early and everything after it becomes markup.
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e"))
 
 
-def _head(title, description, canonical, base, lang, extra="", og_type="website"):
+def _head(title, description, canonical, base, lang, extra="", og_type="website",
+          site_name=None):
     """Tags injected at <!--SSR:HEAD-->; <title> and the description meta are
     replaced in place so the page keeps exactly one of each."""
     tags = [f'<link rel="canonical" href="{esc(canonical)}">']
     if base:
         tags += [
             f'<meta property="og:type" content="{esc(og_type)}">',
-            f'<meta property="og:site_name" content="{esc(title[:100])}">',
+            f'<meta property="og:site_name" content="{esc((site_name or title)[:100])}">',
             f'<meta property="og:title" content="{esc(title[:100])}">',
             f'<meta property="og:description" content="{esc(description[:200])}">',
             f'<meta property="og:url" content="{esc(canonical)}">',
@@ -296,7 +300,7 @@ def render_post(template, post, meta, base, accept_language=None):
     extra = (f'<script type="application/ld+json">{ld}</script>\n'
              f'<link rel="prev" href="/">\n')
     head = _head(f"{title_text} · {channel_title}", description, canonical,
-                 base, lang, extra, og_type="article")
+                 base, lang, extra, og_type="article", site_name=channel_title)
     nav = ('<nav class="post-nav"><a href="/">← All posts</a>'
            f'<a href="{esc(post.get("url"))}" target="_blank" rel="noopener">'
            'Open in Telegram ↗</a></nav>')

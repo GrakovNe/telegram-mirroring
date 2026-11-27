@@ -26,7 +26,6 @@ ALLOWED_TAGS = {
 DROP_CONTENT_TAGS = {"script", "style", "iframe", "object", "embed"}
 # Kept transparently: the glyph inside is what we want, the wrapper is not.
 EMOJI_WRAPPER_TAGS = {"tg-emoji"}
-VOID_TAGS = {"br"}
 # Href schemes we keep; anything else (javascript:, data:, vbscript:) is dropped.
 ALLOWED_SCHEMES = {"http", "https", "mailto", "tg"}
 

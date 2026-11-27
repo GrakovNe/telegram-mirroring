@@ -158,6 +158,7 @@ class SavingEditedPosts(TempStoreMixin):
         # media_delay would otherwise make the suite sleep between downloads
         return store.save_post(post, media_delay=(0, 0), **kw)
 
+
     def test_first_save_downloads_media(self):
         rec = self.save(self.make_post())
         self.assertEqual(self.downloaded, ["https://x/a.jpg"])
@@ -190,6 +191,35 @@ class SavingEditedPosts(TempStoreMixin):
         self.assertEqual(self.downloaded, ["https://x/b.jpg"])
         files = sorted(p.name for p in (store.POSTS / "2026-11-27__101" / "media").iterdir())
         self.assertEqual(files, ["01.jpg"])
+
+    def test_failed_media_is_retried_on_the_next_save(self):
+        """A post whose download once failed must not be frozen in that state:
+        media reuse is only allowed for a set that is fully on disk."""
+        def failing_download(url, dest, referer=None, **kw):
+            self.downloaded.append(url)
+            return False
+
+        def succeeding_download(url, dest, referer=None, **kw):
+            self.downloaded.append(url)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"xx")
+            return True
+
+        store.download = failing_download
+        self.save(self.make_post())
+        self.assertEqual(self.downloaded, ["https://x/a.jpg"])
+
+        # text edit, media still broken -> media must be attempted again
+        self.downloaded.clear()
+        store.download = succeeding_download
+        self.save(self.make_post(text="<p>fixed</p>"),
+                  edited_at="2026-11-27T12:00:00+00:00")
+        self.assertEqual(self.downloaded, ["https://x/a.jpg"])
+
+        # now that it succeeded, a later text edit must reuse it
+        self.downloaded.clear()
+        self.save(self.make_post(text="<p>fixed again</p>"))
+        self.assertEqual(self.downloaded, [])
 
     def test_stored_content_hash(self):
         post = self.make_post()
@@ -258,7 +288,7 @@ class EditWatchCycle(TempStoreMixin):
         self.start_watching()
         self.force_due()
         result = recheck.run_cycle(self.st, fetch_page=lambda pid: self.page("watched"),
-                                   now=self.now)
+                                   now=self.now, sleep=lambda: None)
         self.assertEqual(result["checked"], 1)
         self.assertEqual(result["edited"], [])
         self.assertGreater(recheck.load_schedule()["500"]["due"],
@@ -268,7 +298,7 @@ class EditWatchCycle(TempStoreMixin):
         self.start_watching()
         self.force_due()
         result = recheck.run_cycle(self.st, fetch_page=lambda pid: self.page("EDITED"),
-                                   now=self.now)
+                                   now=self.now, sleep=lambda: None)
         self.assertEqual(result["edited"], [500])
         self.assertIn("EDITED", self.st.get(500)["text_html"])
         self.assertTrue(self.st.get(500)["edited_at"])
@@ -279,8 +309,25 @@ class EditWatchCycle(TempStoreMixin):
         for i in range(recheck.MAX_MISSES):
             self.force_due()
             recheck.run_cycle(self.st, fetch_page=lambda pid: "<html></html>",
-                              now=self.now + i)
+                              now=self.now + i, sleep=lambda: None)
         self.assertTrue(recheck.load_schedule()["500"].get("done"))
+
+    def test_requests_within_a_cycle_are_spaced(self):
+        """A cycle that fetches several groups must not hit t.me back to back."""
+        for pid in (500, 501, 502, 520):
+            self.st.add(store.save_post(
+                self.make_post(pid, dt=self.iso, media=[]), media_delay=(0, 0)))
+        schedule = recheck.load_schedule()
+        for pid in (500, 501, 502, 520):
+            schedule[str(pid)] = {"due": self.now - 1, "checks": 0, "misses": 0}
+        recheck.save_schedule(schedule)
+
+        pauses = []
+        recheck.run_cycle(self.st, fetch_page=lambda pid: self.page("watched"),
+                          now=self.now, sleep=lambda: pauses.append(1))
+        groups = recheck.cluster([str(i) for i in (500, 501, 502, 520)])
+        self.assertGreater(len(groups), 1, "test needs more than one group")
+        self.assertEqual(len(pauses), len(groups) - 1)
 
     def test_post_older_than_the_window_is_dropped(self):
         old = time.strftime("%Y-%m-%dT%H:%M:%S+00:00",
@@ -289,7 +336,8 @@ class EditWatchCycle(TempStoreMixin):
         schedule = recheck.load_schedule()
         schedule["501"] = {"due": self.now - 5, "checks": 0, "misses": 0}
         recheck.save_schedule(schedule)
-        recheck.run_cycle(self.st, fetch_page=lambda pid: "<html></html>", now=self.now)
+        recheck.run_cycle(self.st, fetch_page=lambda pid: "<html></html>",
+                          now=self.now, sleep=lambda: None)
         self.assertNotIn("501", recheck.load_schedule())
 
 
@@ -346,13 +394,18 @@ class ServerSideRendering(TempStoreMixin):
             "preview": None,
         }
 
+    def head(self, html):
+        """Everything up to </head> — where the one-of-each tags must live."""
+        return html.split("</head>")[0]
+
     def test_feed_replaces_every_marker_exactly_once(self):
         html = render.render_feed(self.template, [self.post], 41, self.meta,
                                   "https://m.example")
+        head = self.head(html)
         self.assertNotIn("<!--SSR:", html)
-        self.assertEqual(html.count("<title>"), 1)
-        self.assertEqual(html.count('name="description"'), 1)
-        self.assertEqual(html.count('rel="canonical"'), 1)
+        self.assertEqual(head.count("<title>"), 1)
+        self.assertEqual(head.count('name="description"'), 1)
+        self.assertEqual(head.count('rel="canonical"'), 1)
         self.assertIn('<article class="post" id="post-42"', html)
         self.assertIn("Title line", html)
         self.assertIn("Body <b>bold</b>", html)
@@ -361,7 +414,7 @@ class ServerSideRendering(TempStoreMixin):
     def test_post_page_is_self_contained(self):
         html = render.render_post(self.template, self.post, self.meta, "https://m.example")
         self.assertNotIn("<!--SSR:", html)
-        self.assertEqual(html.count("<title>"), 1)
+        self.assertEqual(self.head(html).count("<title>"), 1)
         self.assertIn('<link rel="canonical" href="https://m.example/post/42">', html)
         self.assertIn('og:type" content="article"', html)
         self.assertIn('<h1 class="post-title">Title line</h1>', html)
@@ -412,6 +465,26 @@ class ServerSideRendering(TempStoreMixin):
         self.assertEqual(render.base_url("mirror.example:8080"),
                          "http://mirror.example:8080")
         self.assertEqual(render.base_url("evil.com/x?"), "")
+
+    def test_json_ld_cannot_break_out_of_its_script_element(self):
+        """Media URLs are scraped out of CSS url(...) and are not sanitized, so
+        they are the realistic way a '<' reaches the JSON-LD blob. json.dumps
+        leaves '<' alone, which would close the script element early."""
+        hostile = dict(self.post, media=[
+            {"type": "photo",
+             "url": "https://x/a.jpg</script><img src=x onerror=alert(1)>"}])
+        html = render.render_post(self.template, hostile, self.meta, "https://m.example")
+        ld = re.search(r'<script type="application/ld\+json">(.*?)</script>',
+                       html, re.S).group(1)
+        self.assertNotIn("<", ld)
+        self.assertNotIn(">", ld)
+        # the payload survives as inert data, it is not silently dropped
+        self.assertIn("onerror=alert(1)", json.loads(ld)["image"])
+
+    def test_og_site_name_is_the_channel_not_the_page_title(self):
+        html = render.render_post(self.template, self.post, self.meta, "https://m.example")
+        self.assertIn('og:site_name" content="Chan"', html)
+        self.assertIn('og:title" content="Title line · Chan"', html)
 
     def test_text_is_escaped(self):
         xss = dict(self.post, text_html="<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>")

@@ -459,7 +459,6 @@ document.querySelector('.wordmark').addEventListener('click', e => {
 });
 
 let nextBefore = null;
-let loadedOnce = false;
 let loading = false;
 let done = false;
 let firstLoad = true;
@@ -582,6 +581,9 @@ function enhanceCard(card, body) {
   if (!body) body = card.querySelector('.post-text');
   if (!body || card.dataset.enhanced) return;
   card.dataset.enhanced = '1';
+  // Server-rendered bodies arrive fully expanded so a crawler or a browser
+  // without JS reads the whole post; collapse them here, before measuring.
+  body.classList.add('collapsed');
   const btn = el('button', 'read-more', T.readMore);
   btn.addEventListener('click', () => {
     const collapsed = body.classList.toggle('collapsed');
@@ -726,9 +728,10 @@ function applyLabels() {
 
 function applyMeta(meta) {
   const title = (meta && (meta.title || meta.username)) || 'Telegram';
-  // Only the feed page carries the raw username as its placeholder title;
-  // a server-rendered post page has a real title and must keep it.
-  if (document.title === CHANNEL) document.title = title;
+  // A server-rendered page already carries its final document title (the
+  // feed's channel title, or the post's own headline). Only a page served as a
+  // plain static file still has the placeholder and needs it filled in.
+  if (!window.__SSR__) document.title = title;
   document.getElementById('wordmark').textContent = title;
   const link = document.getElementById('channel-link');
   if (meta && meta.url) link.href = meta.url;

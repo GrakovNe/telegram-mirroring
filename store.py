@@ -24,7 +24,6 @@ import threading
 import html as htmllib
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from scrape import UA        # single source of truth for the User-Agent
 from config import MEDIA_DELAY
@@ -338,7 +337,7 @@ def save_post(post, media_delay=MEDIA_DELAY, reuse_media=True, edited_at=""):
     old_md = folder / "post.md"
     old_fm = _read_frontmatter(old_md) if old_md.is_file() else None
     if (reuse_media and old_fm and old_fm.get("media_hash") == new_media_hash
-            and old_fm.get("media_hash")):
+            and old_fm.get("media_ok") == "1"):
         media_out, prev_out = _media_from_frontmatter(old_fm)
     else:
         media_out, prev_out = _download_media(post, mdir, media_delay)
@@ -346,7 +345,8 @@ def save_post(post, media_delay=MEDIA_DELAY, reuse_media=True, edited_at=""):
 
     body_md = html_to_md(post["text_html"])
     _write_md(old_md, post, media_out, prev_out, body_md,
-              content_hash(post), new_media_hash, edited_at)
+              content_hash(post), new_media_hash, edited_at,
+              media_ok=_media_complete(post, media_out, prev_out))
     return _record(post["id"], post["url"], post["datetime"], body_md,
                    folder.name, media_out, prev_out, edited_at)
 
@@ -411,6 +411,22 @@ def _media_from_frontmatter(fm):
     return media_out, prev_out
 
 
+def _media_complete(post, media_out, prev_out):
+    """'1' when every media item the post declares is on disk (or has nothing to
+    download), '0' otherwise. Media reuse is only allowed for a complete set:
+    otherwise a post whose download once failed could never be repaired."""
+    want = len(post.get("media", []))
+    have = sum(1 for m in media_out if m.get("file"))
+    # a video without a poster is normal (Telegram serves it from its own page)
+    video_without_poster = sum(1 for m in post.get("media", [])
+                              if m["type"] == "video" and not m.get("thumb"))
+    if have + video_without_poster < want:
+        return "0"
+    if (post.get("preview") or {}).get("image") and not (prev_out or {}).get("image_file"):
+        return "0"
+    return "1"
+
+
 def _prune_media(mdir, media_out, prev_out):
     """Delete files in a post's media dir that the new media set no longer
     references (an edit that drops a photo must not leave it served forever)."""
@@ -432,7 +448,8 @@ def _oneline(s):
     return re.sub(r"\s+", " ", s or "").strip()
 
 
-def _write_md(path, post, media_out, prev_out, body_md, chash="", mhash="", edited=""):
+def _write_md(path, post, media_out, prev_out, body_md, chash="", mhash="",
+              edited="", media_ok="1"):
     # media frontmatter token grammar (mirrored by _media_from_frontmatter):
     #   photo -> "<file>:photo"
     #   video -> "<file|->:video:<tg_url>"   ('-' means the poster failed to download)
@@ -446,6 +463,7 @@ def _write_md(path, post, media_out, prev_out, body_md, chash="", mhash="", edit
         fm.append(f"content_hash: {chash}")
     if mhash:
         fm.append(f"media_hash: {mhash}")
+        fm.append(f"media_ok: {media_ok}")
     if media_out:
         parts = []
         for m in media_out:

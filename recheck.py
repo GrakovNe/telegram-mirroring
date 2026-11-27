@@ -27,12 +27,13 @@ import datetime
 import json
 import math
 import os
+import random
 import time
 
 import scrape
 import store
 from config import (RECHECK_ENABLED, RECHECK_WINDOW, RECHECK_FIRST_INTERVAL,
-                    RECHECK_FACTOR, RECHECK_MAX_PAGES)
+                    RECHECK_FACTOR, RECHECK_MAX_PAGES, PAGE_DELAY)
 
 SCHEDULE_FILE = store.DATA / "recheck.json"
 
@@ -174,8 +175,16 @@ def cluster(ids):
 # the cycle
 # --------------------------------------------------------------------------
 
-def run_cycle(st, fetch_page=scrape.fetch_post_html, now=None):
+def _pause():
+    """Same spacing the sync loop keeps between t.me pages."""
+    time.sleep(random.uniform(*PAGE_DELAY))
+
+
+def run_cycle(st, fetch_page=scrape.fetch_post_html, now=None, sleep=_pause):
     """Re-check due posts for edits. `fetch_page(pid)` returns page HTML or None.
+
+    `sleep` separates the requests of a multi-group cycle: without it a cycle
+    with RECHECK_MAX_PAGES groups would hit t.me that many times back to back.
 
     Returns {"checked": n, "edited": [ids]} for logging and tests."""
     if not RECHECK_ENABLED:
@@ -190,7 +199,10 @@ def run_cycle(st, fetch_page=scrape.fetch_post_html, now=None):
         return {"checked": 0, "edited": []}
 
     checked, edited = 0, []
-    for group in cluster(due)[:RECHECK_MAX_PAGES]:
+    groups = cluster(due)[:RECHECK_MAX_PAGES]
+    for n, group in enumerate(groups):
+        if n:
+            sleep()
         html = fetch_page(group[-1])          # one window covers the whole group
         if html is None:
             continue                          # network trouble: retry on a later cycle

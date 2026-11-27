@@ -115,7 +115,9 @@ A change is detected by content fingerprint (`store.content_hash`), not by
 Telegram's "edited" label, which disappears again after a while. When a post
 changed, it is re-persisted in place — same folder, `edited_at` recorded in the
 frontmatter — and media whose remote URL is unchanged is reused rather than
-re-downloaded. A post that stops appearing in its own window `MAX_MISSES` times
+re-downloaded. Reuse applies only when the stored set is complete (`media_ok: 1`
+in the frontmatter), so a post whose download once failed is retried instead of
+staying broken. A post that stops appearing in its own window `MAX_MISSES` times
 is treated as deleted and dropped.
 
 ### Search engines
